@@ -15,8 +15,9 @@
 start() ->
     receive
         stop ->
-            io:format("the server has been stopped ~n");
+            io:format("the server ~w has been stopped ~n", [self()]);
         {check, Pid, Text} ->
+            io:format("the server ~w has received the message ~s ~n", [self(), Text]),
             Pid ! {result, build_result_message(Text)},
             start()
     end.
