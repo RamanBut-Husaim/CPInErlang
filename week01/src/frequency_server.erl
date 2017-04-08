@@ -13,10 +13,16 @@
 -export([
     start/0,
     init/0,
+    allocate/0,
+    deallocate/1,
+    stop/0,
     perform_allocation/2,
     allocate/2,
     perform_deallocation/2,
     deallocate/2]).
+
+%% These are the start functions used to create and
+%% initialize the server.
 
 start() ->
     Server = ?MODULE,
@@ -40,7 +46,51 @@ init() ->
 -type allocate_operation_result() :: {ok, freq()} | {error, no_frequency} | {use, freq()}.
 -type deallocate_operation_result() :: {ok, freq()} | {error, no_frequency} | {error, forbidden}.
 -type operation_result() :: {server_state(), allocate_operation_result() | deallocate_operation_result()}.
--type server_result() :: {reply, allocate_operation_result() | deallocate_operation_result() | stopped}.
+-type server_reply() :: allocate_operation_result() | deallocate_operation_result() | stopped.
+-type server_result() :: {reply, server_reply()}.
+
+%% Functional interface
+
+-spec allocate() -> allocate_operation_result() | {error, timeout}.
+allocate() ->
+    clear(),
+    Server = ?MODULE,
+    Server ! {request, self(), allocate},
+    receive
+        {reply, Reply} -> Reply
+    after 1000 ->
+        {error, timeout}
+    end.
+
+-spec deallocate(Freq) -> deallocate_operation_result() | {error, timeout} when Freq::freq().
+deallocate(Freq) ->
+    clear(),
+    Server = ?MODULE,
+    Server ! {request, self(), {deallocate, Freq}},
+    receive
+        {reply, Reply} -> Reply
+    after 1000 ->
+        {error, timeout}
+    end.
+
+-spec stop() -> stopped.
+stop() ->
+    clear(),
+    Server = ?MODULE,
+    Server ! {request, self(), stop},
+    receive
+        {reply, Reply} -> Reply
+    end.
+
+-spec clear() -> ok.
+clear() ->
+    receive
+        Msg ->
+            io:format("cleared messsage: ~w~n", [Msg]),
+            clear()
+    after 0 ->
+        ok
+    end.
 
 % Hard Coded
 -spec get_frequencies() -> [I, ...] when I :: freq().
@@ -51,10 +101,12 @@ loop(State) ->
     receive
         {request, Pid, allocate} ->
             {NewState, Reply} = perform_allocation(State, Pid),
+            timer:sleep(1100),
             Pid ! {reply, Reply},
             loop(NewState);
         {request, Pid , {deallocate, Freq}} ->
             {NewState, Reply} = perform_deallocation(State, {Pid, Freq}),
+            timer:sleep(1100),
             Pid ! {reply, Reply},
             loop(NewState);
         {request, Pid, stop} ->
