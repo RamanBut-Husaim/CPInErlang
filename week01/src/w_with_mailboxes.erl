@@ -10,7 +10,7 @@
 -author("Rakkatakka").
 
 %% API
--export([receiver/0, receiver_case/0]).
+-export([receiver/0, receiver_case/0, receiver_priority/0]).
 
 receiver() ->
     timer:sleep(1000),
@@ -34,3 +34,37 @@ receiver_case()->
                     receiver_case()
             end
     end.
+
+receiver_priority() ->
+    Threshold = 5,
+    receive_messages(Threshold, []).
+
+receive_messages(Threshold, MessagePool) when length(MessagePool) =:= Threshold ->
+    display_message_pool_in_order(MessagePool),
+    receive_messages(Threshold, []);
+receive_messages(Threshold, MessagePool) ->
+    receive
+        stop ->
+            display_message_pool_in_order(MessagePool),
+            io:format("the receiver has been stopped ~n");
+        {first, Msg} ->
+            receive_messages(Threshold, [{Msg, 1} | MessagePool]);
+        {second, Msg} ->
+            receive_messages(Threshold, [{Msg, 2} | MessagePool])
+    end.
+
+display_message_pool_in_order(MessagePool) ->
+    Messages = order_messages(MessagePool),
+    display_messages(Messages).
+
+order_messages(MessagePool) ->
+    lists:map(fun ({Msg, _}) -> Msg end,
+        lists:sort(fun ({_, T1}, {_, T2}) -> T1 =< T2 end,
+            lists:reverse(MessagePool)
+        )
+    ).
+
+display_messages(MessagePool) ->
+    lists:foreach(
+        fun (Msg) -> io:format("~s~n", [Msg]) end,
+        MessagePool).
