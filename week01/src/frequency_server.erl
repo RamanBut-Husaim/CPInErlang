@@ -36,22 +36,28 @@ init() ->
 %% types
 
 %% domain
--type freq() :: integer().
+-type freq() :: pos_integer().
 -type allocations() :: #{pid() => freq()}.
 -type freq_list() :: [freq()].
 -type server_state() :: {freq_list(), allocations()}.
 
 %% results
 
--type allocate_operation_result() :: {ok, freq()} | {error, no_frequency} | {use, freq()}.
--type deallocate_operation_result() :: {ok, freq()} | {error, no_frequency} | {error, forbidden}.
+-type ok_freq() :: {ok, freq()}.
+-type error_no_freq() :: {error, no_frequency}.
+-type use_freq() :: {use, freq()}.
+-type error_forbidden() :: {error, forbidden}.
+-type error_timeout() :: {error, timeout}.
+
+-type allocate_operation_result() :: ok_freq() | error_no_freq() | use_freq().
+-type deallocate_operation_result() :: ok_freq() | error_no_freq() | error_forbidden().
 -type operation_result() :: {server_state(), allocate_operation_result() | deallocate_operation_result()}.
 -type server_reply() :: allocate_operation_result() | deallocate_operation_result() | stopped.
 -type server_result() :: {reply, server_reply()}.
 
 %% Functional interface
 
--spec allocate() -> allocate_operation_result() | {error, timeout}.
+-spec allocate() -> allocate_operation_result() | error_timeout().
 allocate() ->
     clear(),
     Server = ?MODULE,
@@ -59,10 +65,10 @@ allocate() ->
     receive
         {reply, Reply} -> Reply
     after 1000 ->
-        {error, timeout}
+        timeout()
     end.
 
--spec deallocate(Freq) -> deallocate_operation_result() | {error, timeout} when Freq::freq().
+-spec deallocate(Freq) -> deallocate_operation_result() | error_timeout() when Freq::freq().
 deallocate(Freq) ->
     clear(),
     Server = ?MODULE,
@@ -70,7 +76,7 @@ deallocate(Freq) ->
     receive
         {reply, Reply} -> Reply
     after 1000 ->
-        {error, timeout}
+        timeout()
     end.
 
 -spec stop() -> stopped.
@@ -121,8 +127,11 @@ loop(State) ->
     Pid::pid().
 perform_allocation({_, Allocations} = ServerState, Pid) ->
     case maps:is_key(Pid, Allocations) of
-        true -> create_allocation_result(ServerState, {use, maps:get(Pid, Allocations)});
-        _ -> allocate(ServerState, Pid)
+        true ->
+            Freq = maps:get(Pid, Allocations),
+            create_allocation_result(ServerState, use(Freq));
+        _ ->
+            allocate(ServerState, Pid)
     end.
 
 -spec create_allocation_result(State, OpResult) -> operation_result() when
@@ -135,9 +144,9 @@ create_allocation_result(ServerState, AllocateOperationResult) ->
     ServerState::server_state(),
     Pid::pid().
 allocate({[], _} = ServerState, _Pid) ->
-    create_allocation_result(ServerState, {error, no_frequency});
+    create_allocation_result(ServerState, no_frequency());
 allocate({[Freq|Free], Allocations}, Pid) ->
-    create_allocation_result({Free, maps:put(Pid, Freq, Allocations)}, {ok, Freq}).
+    create_allocation_result({Free, maps:put(Pid, Freq, Allocations)}, ok(Freq)).
 
 -spec perform_deallocation(ServerState, Request) -> operation_result() when
     ServerState::server_state(),
@@ -145,7 +154,7 @@ allocate({[Freq|Free], Allocations}, Pid) ->
 perform_deallocation({_, Allocations} = ServerState, {Pid, _} = Request) ->
     case maps:is_key(Pid, Allocations) of
         true -> deallocate(ServerState, Request);
-        _ -> create_deallocation_result(ServerState, {error, no_frequency})
+        _ -> create_deallocation_result(ServerState, no_frequency())
     end.
 
 -spec create_deallocation_result(State, OpResult) -> operation_result() when
@@ -159,6 +168,29 @@ create_deallocation_result(ServerState, DeallocationOperationResult) ->
     Request::{pid(), freq()}.
 deallocate({Free, Allocations} = State, {Pid, Freq}) ->
     case maps:get(Pid, Allocations) of
-        Freq -> create_deallocation_result({[Freq | Free], maps:remove(Pid, Allocations)}, {ok, Freq});
-        _ -> create_deallocation_result(State, {error, forbidden})
+        Freq -> create_deallocation_result({[Freq | Free], maps:remove(Pid, Allocations)}, ok(Freq));
+        _ -> create_deallocation_result(State, forbidden())
     end.
+
+-spec use(Freq) -> use_freq() when
+    Freq::freq().
+use(Freq) ->
+    {use, Freq}.
+
+-spec forbidden() -> error_forbidden().
+forbidden() ->
+    {error, forbidden}.
+
+-spec ok(Freq) -> ok_freq() when
+    Freq::freq().
+ok(Freq) ->
+    {ok, Freq}.
+
+-spec no_frequency() -> error_no_freq().
+no_frequency() ->
+    {error, no_frequency}.
+
+-spec timeout() -> error_timeout().
+timeout() ->
+    {error, timeout}.
+
