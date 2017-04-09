@@ -160,5 +160,5 @@ create_deallocation_result(ServerState, DeallocationOperationResult) ->
 deallocate({Free, Allocations} = State, {Pid, Freq}) ->
     case maps:get(Pid, Allocations) of
         Freq -> create_deallocation_result({[Freq | Free], maps:remove(Pid, Allocations)}, {ok, Freq});
-        _ -> create_allocation_result(State, {error, forbidden})
+        _ -> create_deallocation_result(State, {error, forbidden})
     end.
