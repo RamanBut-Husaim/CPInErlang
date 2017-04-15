@@ -30,6 +30,7 @@ start() ->
     register(Server, Pid).
 
 init() ->
+    process_flag(trap_exit, true),
     Frequencies = {get_frequencies(), #{}},
     loop(Frequencies).
 
@@ -59,33 +60,37 @@ init() ->
 
 -spec allocate() -> allocate_operation_result() | error_timeout().
 allocate() ->
-    clear(),
-    Server = ?MODULE,
-    Server ! {request, self(), allocate},
-    receive
-        {reply, Reply} -> Reply
-    after 1000 ->
-        timeout()
-    end.
+    send_client_message({request, self(), allocate}).
 
 -spec deallocate(Freq) -> deallocate_operation_result() | error_timeout() when Freq::freq().
 deallocate(Freq) ->
-    clear(),
-    Server = ?MODULE,
-    Server ! {request, self(), {deallocate, Freq}},
-    receive
-        {reply, Reply} -> Reply
-    after 1000 ->
-        timeout()
-    end.
+    send_client_message({request, self(), {deallocate, Freq}}).
 
 -spec stop() -> stopped.
 stop() ->
+    send_client_message({request, self(), stop}).
+
+send_client_message(Msg) ->
     clear(),
     Server = ?MODULE,
-    Server ! {request, self(), stop},
+    case whereis(Server) of
+        undefined ->
+            {error, server_not_found};
+        _ ->
+            Server ! Msg,
+            receive_client_message()
+    end.
+
+receive_client_message() ->
     receive
-        {reply, Reply} -> Reply
+        {'EXIT', Pid, Reason} ->
+            io:format("~s - ~p: server process ~p died with reason ~p ~n", [get_current_time(), self(), Pid, Reason]),
+            {error, server_died};
+
+        {reply, Reply} ->
+            Reply
+    after 1000 ->
+        timeout()
     end.
 
 -spec clear() -> ok.
@@ -107,16 +112,17 @@ loop(State) ->
     receive
         {request, Pid, allocate} ->
             {NewState, Reply} = perform_allocation(State, Pid),
-            timer:sleep(1100),
             Pid ! {reply, Reply},
             loop(NewState);
         {request, Pid , {deallocate, Freq}} ->
             {NewState, Reply} = perform_deallocation(State, {Pid, Freq}),
-            timer:sleep(1100),
             Pid ! {reply, Reply},
             loop(NewState);
         {request, Pid, stop} ->
-            Pid ! {reply, stopped}
+            Pid ! {reply, stopped};
+        {'EXIT', Pid, _Reason} ->
+            NewState = exited(State, Pid),
+            loop(NewState)
     end.
 
 %% The Internal Help Functions used to allocate and
@@ -146,6 +152,7 @@ create_allocation_result(ServerState, AllocateOperationResult) ->
 allocate({[], _} = ServerState, _Pid) ->
     create_allocation_result(ServerState, no_frequency());
 allocate({[Freq|Free], Allocations}, Pid) ->
+    link(Pid),
     create_allocation_result({Free, maps:put(Pid, Freq, Allocations)}, ok(Freq)).
 
 -spec perform_deallocation(ServerState, Request) -> operation_result() when
@@ -168,9 +175,26 @@ create_deallocation_result(ServerState, DeallocationOperationResult) ->
     Request::{pid(), freq()}.
 deallocate({Free, Allocations} = State, {Pid, Freq}) ->
     case maps:get(Pid, Allocations) of
-        Freq -> create_deallocation_result({[Freq | Free], maps:remove(Pid, Allocations)}, ok(Freq));
-        _ -> create_deallocation_result(State, forbidden())
+        Freq ->
+            unlink(Pid),
+            create_deallocation_result({[Freq | Free], maps:remove(Pid, Allocations)}, ok(Freq));
+        _ ->
+            create_deallocation_result(State, forbidden())
     end.
+
+-spec exited(ServerState, Pid) -> server_state() when
+    ServerState::server_state(),
+    Pid::pid().
+exited({Free, Allocations} = State, Pid) ->
+    case maps:get(Pid, Allocations) of
+        Freq ->
+            {[Freq | Free], maps:remove(Pid, Allocations)};
+        _ -> State
+    end.
+
+get_current_time() ->
+    {H, M, S} = time(),
+    io_lib:format('~2..0b:~2..0b:~2..0b', [H, M, S]).
 
 -spec use(Freq) -> use_freq() when
     Freq::freq().
