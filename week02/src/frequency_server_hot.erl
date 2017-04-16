@@ -15,6 +15,7 @@
     init/0,
     allocate/0,
     deallocate/1,
+    inject/1,
     stop/0,
     loop/1
 ]).
@@ -50,8 +51,9 @@ init() ->
 
 -type allocate_operation_result() :: ok_freq() | error_no_freq() | use_freq().
 -type deallocate_operation_result() :: ok_freq() | error_no_freq() | error_forbidden().
--type operation_result() :: {server_state(), allocate_operation_result() | deallocate_operation_result()}.
--type server_reply() :: allocate_operation_result() | deallocate_operation_result() | stopped.
+-type injection_operation_result() :: {ok}.
+-type operation_result() :: {server_state(), allocate_operation_result() | deallocate_operation_result() | injection_operation_result()}.
+-type server_reply() :: allocate_operation_result() | deallocate_operation_result() | injection_operation_result() | stopped.
 -type server_result() :: {reply, server_reply()}.
 
 %% Functional interface
@@ -63,6 +65,11 @@ allocate() ->
 -spec deallocate(Freq) -> deallocate_operation_result() | error_timeout() when Freq::freq().
 deallocate(Freq) ->
     send_client_message({request, self(), {deallocate, Freq}}).
+
+-spec inject(Frequencies) -> injection_operation_result() | error_timeout() when
+    Frequencies::freq_list().
+inject(Frequencies) ->
+    send_client_message({request, self(), {inject, Frequencies}}).
 
 -spec stop() -> stopped.
 stop() ->
@@ -108,6 +115,10 @@ get_frequencies() -> [10,11,12,13,14,15].
 -spec loop(State) -> server_result() when State::server_state().
 loop(State) ->
     receive
+        {request, Pid, {inject, NewFrequencies}} ->
+            {NewState, Reply} = perform_injection(State, NewFrequencies),
+            Pid ! {reply, Reply},
+            ?MODULE:loop(NewState);
         {request, Pid, allocate} ->
             {NewState, Reply} = perform_allocation(State, Pid),
             Pid ! {reply, Reply},
@@ -152,6 +163,22 @@ allocate({[], _} = ServerState, _Pid) ->
 allocate({[Freq|Free], Allocations}, Pid) ->
     link(Pid),
     create_allocation_result({Free, maps:put(Pid, Freq, Allocations)}, ok(Freq)).
+
+-spec perform_injection(ServerState, NewFrequencies) -> operation_result() when
+    ServerState::server_state(),
+    NewFrequencies::freq_list().
+perform_injection(ServerState, NewFrequencies) when is_list(NewFrequencies) ->
+    inject(ServerState, NewFrequencies).
+
+-spec inject(ServerState, NewFrequencies) -> operation_result() when
+    ServerState::server_state(),
+    NewFrequencies::freq_list().
+inject({FreqList, Allocations}, NewFrequencies) ->
+    ConcatenatedList = lists:append(FreqList, NewFrequencies),
+    create_injection_result({ConcatenatedList, Allocations}).
+
+create_injection_result(ServerState) ->
+    {ServerState, ok()}.
 
 -spec perform_deallocation(ServerState, Request) -> operation_result() when
     ServerState::server_state(),
@@ -207,6 +234,10 @@ forbidden() ->
     Freq::freq().
 ok(Freq) ->
     {ok, Freq}.
+
+-spec ok() -> {ok}.
+ok() ->
+    {ok}.
 
 -spec no_frequency() -> error_no_freq().
 no_frequency() ->
