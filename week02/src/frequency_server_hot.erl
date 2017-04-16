@@ -15,7 +15,8 @@
     init/0,
     allocate/0,
     deallocate/1,
-    stop/0
+    stop/0,
+    loop/1
 ]).
 
 %% These are the start functions used to create and
@@ -110,16 +111,16 @@ loop(State) ->
         {request, Pid, allocate} ->
             {NewState, Reply} = perform_allocation(State, Pid),
             Pid ! {reply, Reply},
-            loop(NewState);
+            ?MODULE:loop(NewState);
         {request, Pid , {deallocate, Freq}} ->
             {NewState, Reply} = perform_deallocation(State, {Pid, Freq}),
             Pid ! {reply, Reply},
-            loop(NewState);
+            ?MODULE:loop(NewState);
         {request, Pid, stop} ->
             Pid ! {reply, stopped};
         {'EXIT', Pid, _Reason} ->
             NewState = exited(State, Pid),
-            loop(NewState)
+            ?MODULE:loop(NewState)
     end.
 
 %% The Internal Help Functions used to allocate and
